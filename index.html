@@ -317,6 +317,14 @@ ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;f
   body{background:#fff}
 }
 
+/* Registro rápido */
+.qbox{position:relative}
+.qbox textarea{min-height:96px;padding-right:66px;font-size:17px}
+.mic{position:absolute;right:10px;bottom:10px;width:48px;height:48px;border-radius:50%;border:0;background:var(--grad);display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 6px 16px -6px color-mix(in srgb,var(--acc) 70%,transparent)}
+.mic svg{width:24px;height:24px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round}
+.mic.on{background:var(--bad);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 10px color-mix(in srgb,var(--bad) 25%,transparent)}}
+
 :root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
 [hidden]{display:none!important}
 img{max-width:100%}
@@ -939,8 +947,9 @@ function viewReports() {
 /* ---------- Hojas (paneles que suben desde abajo) ---------- */
 const STACK = [];
 function openSheet(sh) { STACK.push(sh); drawSheet(); }
-function closeSheet() { STACK.pop(); drawSheet(); }
-function closeAll() { STACK.length = 0; drawSheet(); }
+function closeSheet() { stopRec(); STACK.pop(); drawSheet(); }
+function closeAll() { stopRec(); STACK.length = 0; drawSheet(); }
+function stopRec() { try { if (REC) { const r = REC; REC = null; r.onend = null; r.abort(); } } catch { } }
 function drawSheet(keepScroll) {
   const root = $('#sheets'); const top = STACK[STACK.length - 1];
   if (!top) { root.innerHTML = ''; return; }
@@ -1007,7 +1016,7 @@ function syncF(el) {
 }
 function txSheet() {
   return {
-    title: F.id ? 'Editar movimiento' : 'Nuevo movimiento',
+    title: F.quickIdx != null ? 'Ajustar movimiento' : F.id ? 'Editar movimiento' : 'Nuevo movimiento',
     render() {
       const cats = S.cats.filter(c => c.profile === F.profile && c.kind === F.kind);
       if (!cats.some(c => c.id === F.cat)) F.cat = null;
@@ -1028,7 +1037,7 @@ function txSheet() {
       ${F.receiptNew ? `<img class="thumb" src="${F.receiptNew}" alt="Recibo">` : F.receipt ? `<button class="btn ghost sm" data-act="viewReceipt" data-id="${F.receipt}">Ver recibo guardado</button>` : ''}
       <div class="fld"><label for="fNote">Nota</label><input class="inp" id="fNote" placeholder="Ej: almuerzo con el equipo #evento" value="${esc(F.note)}" autocomplete="off"><span class="note">Usa #etiquetas para agrupar gastos de un evento o viaje.</span></div>
       ${F.kind === 'expense' ? `<label class="switch"><span class="tx">Lo pagó ${esc(other_)}<small>Queda como reembolsable: ${esc(S.profiles[F.profile].name)} le debe esta plata a ${esc(other_)}.</small></span><input type="checkbox" class="tg" id="fPaid" ${F.paidBy ? 'checked' : ''}></label>` : ''}
-      <button class="btn pri block" data-act="saveTx">${F.id ? 'Guardar cambios' : F.kind === 'income' ? 'Registrar ingreso' : 'Registrar gasto'}</button>
+      <button class="btn pri block" data-act="saveTx">${F.quickIdx != null ? 'Listo' : F.id ? 'Guardar cambios' : F.kind === 'income' ? 'Registrar ingreso' : 'Registrar gasto'}</button>
       ${F.id ? `<button class="btn danger block" data-act="delTx">Eliminar movimiento</button>` : ''}`;
     },
     mount(el) {
@@ -1043,6 +1052,7 @@ function txSheet() {
 }
 async function saveTx() {
   const el = $('.sheet'); syncF(el);
+  if (F.quickIdx != null) { if (!F.cat) return toast('Elige una categoría', 'bad'); return quickFromForm(); }
   const raw = parseAmt(F.amountTxt);
   if (!raw) return toast('Escribe el monto', 'bad');
   if (!F.cat) return toast('Elige una categoría', 'bad');
@@ -1163,10 +1173,11 @@ function catForm(id) {
       ${c.kind === 'expense' ? `<div class="fld"><label for="cB">Presupuesto mensual (opcional)</label><input class="inp num" id="cB" inputmode="numeric" value="${c.budget ? fmtInput(c.budget) : ''}" placeholder="Sin límite"></div>` : ''}
       ${c.kind === 'expense' && c.profile === 'sergio' ? `<div class="fld"><label for="cG">Tipo (para la regla 50/30/20)</label><select class="inp" id="cG">${[['need', 'Necesidad'], ['want', 'Gusto'], ['save', 'Ahorro o deuda']].map(([k, l]) => `<option value="${k}" ${c.group === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
       <div class="fld"><label for="cS">Subcategorías (separadas por coma)</label><input class="inp" id="cS" value="${esc((c.subs || []).join(', '))}" placeholder="Ej: Sonido, Luces, Decoración"></div>
+      <div class="fld"><label for="cK">Palabras para el registro rápido</label><input class="inp" id="cK" value="${esc((c.kw || []).join(', '))}" placeholder="Ej: Crepes, Andrés Carne de Res, Juan Valdez"><span class="note">Si dices o escribes alguna de estas palabras, el gasto cae en esta categoría.</span></div>
       <button class="btn pri block" id="cOk">${id ? 'Guardar' : 'Crear categoría'}</button>
       ${id && !c.sys ? `<button class="btn danger block" id="cDel">Eliminar categoría</button>` : ''}`,
     mount: el => {
-      const sync = () => { c.name = $('#cN', el).value; c.icon = $('#cI', el).value || c.icon; if ($('#cB', el)) c.budget = parseAmt($('#cB', el).value); if ($('#cG', el)) c.group = $('#cG', el).value; c.subs = $('#cS', el).value.split(',').map(s => s.trim()).filter(Boolean); };
+      const sync = () => { c.name = $('#cN', el).value; c.icon = $('#cI', el).value || c.icon; if ($('#cB', el)) c.budget = parseAmt($('#cB', el).value); if ($('#cG', el)) c.group = $('#cG', el).value; c.subs = $('#cS', el).value.split(',').map(s => s.trim()).filter(Boolean); c.kw = $('#cK', el).value.split(',').map(s => s.trim()).filter(Boolean); };
       $$('.emo button', el).forEach(b => b.onclick = () => { sync(); c.icon = b.dataset.e; redrawSheet(); });
       $$('.sw button', el).forEach(b => b.onclick = () => { sync(); c.color = b.dataset.c; redrawSheet(); });
       const cb = $('#cB', el); if (cb) cb.oninput = () => { cb.value = fmtInput(cb.value); };
@@ -1505,6 +1516,311 @@ function reimburse(p) {
   confirmSheet('Saldar reembolso', `Marca como pagados ${x.list.length} gasto${x.list.length > 1 ? 's' : ''} por ${money(x.total)} que ${esc(S.profiles[x.creditor].name)} pagó por ${esc(S.profiles[p].name)}.`, 'Marcar como saldado', () => { x.list.forEach(t => { t.reimbursed = true; }); persist(); render(); toast('Reembolso saldado'); }, false);
 }
 
+/* ---------- Registro rápido por voz o texto (se interpreta en el teléfono, sin internet) ---------- */
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+
+/* Palabras que la app reconoce por categoría (se suman a las que tú agregues en cada categoría) */
+const SYN = {
+  sergio: {
+    expense: {
+      'comida y restaurantes': 'restaurante,almuerzo,almorce,desayuno,desayune,cena,cene,comi,comida,hamburguesa,pizza,sushi,panaderia,crepes,corrientazo,empanada,helado,postre,cafe',
+      'mercado': 'mercado,supermercado,exito,d1,ara,carulla,jumbo,olimpica,makro,tienda de barrio,fruver',
+      'domicilios': 'domicilio,rappi,ifood,didi food,pedi a domicilio',
+      'transporte': 'uber,taxi,didi,gasolina,tanquee,tanqueo,parqueadero,peaje,metro,bus,transmilenio,cabify,indriver,pasaje,moto',
+      'vivienda': 'arriendo,administracion,arrendamiento',
+      'servicios': 'luz,agua,gas,internet,plan de celular,factura,epm,claro,movistar,tigo',
+      'salud': 'medico,farmacia,drogueria,medicina,medicamento,cita,odontologo,eps,examen,laboratorio',
+      'deporte y gym': 'gym,gimnasio,smartfit,bodytech,cancha,futbol,crossfit,entreno',
+      'cuidado personal': 'peluqueria,barberia,corte de pelo,unas,perfume,crema,spa',
+      'ropa y accesorios': 'ropa,camisa,camiseta,zapatos,tenis,pantalon,jean,gorra,chaqueta,reloj',
+      'entretenimiento y ocio': 'cine,concierto,teatro,museo,boleta,parque,videojuego,bolos,karaoke',
+      'fiesta y rumba': 'fiesta,rumba,discoteca,trago,cerveza,guaro,aguardiente,ron,cover,bar,licor,botella,farra',
+      'reuniones': 'reunion',
+      'suscripciones': 'netflix,spotify,suscripcion,icloud,youtube premium,disney,hbo,max,prime,chatgpt,claude,membresia',
+      'viajes': 'viaje,hotel,vuelo,tiquete,airbnb,avion,hostal',
+      'educacion': 'curso,libro,universidad,matricula,clase,taller,diplomado',
+      'regalos': 'regalo,cumpleanos,detalle',
+      'tecnologia': 'computador,audifonos,cargador,iphone,mac,ipad,celular nuevo,accesorio',
+      'pagos de deudas': 'deuda,cuota del credito,cuota del prestamo,abono a la deuda',
+      'inversiones': 'inversion,invertir,acciones,cripto,bitcoin,cdt,fiducia',
+      'impuestos': 'impuesto,predial,dian,renta,vehicular',
+    },
+    income: {
+      'salario': 'salario,sueldo,quincena,nomina,me pagaron el mes',
+      'honorarios y freelance': 'freelance,honorarios,proyecto,cliente,me pago un cliente,factura',
+      'pagos de casa cumba': 'cumba me pago,pago de cumba,de casa cumba',
+      'rendimientos': 'rendimiento,intereses,dividendo',
+      'prestamos cobrados': 'me devolvio,me pago lo que le preste,me pagaron la plata que preste',
+    },
+  },
+  cumba: {
+    expense: {
+      'produccion de eventos': 'sonido,luces,tarima,decoracion,montaje,produccion,seguridad del evento,carpa,sillas,mesas',
+      'espacios y venues': 'venue,salon,espacio,alquiler del lugar,finca,local para el evento,lugar del evento',
+      'artistas y talento': 'artista,dj,banda,musico,talento,presentador,show,cantante',
+      'bienestar y deporte': 'instructor,yoga,bienestar,meditacion,profesor de',
+      'juegos de mesa e inventario': 'juegos de mesa,juego de mesa,inventario,mercancia,reposicion,importacion,empaques',
+      'contenido digital': 'video,edicion,grabacion,contenido,fotografo,camarografo,reel,podcast',
+      'marketing y publicidad': 'publicidad,pauta,instagram,facebook,meta ads,google ads,tiktok,diseno,volantes,flyer,influenciador,anuncio',
+      'nomina y honorarios': 'nomina,sueldo,honorarios,pago al equipo,staff,logistico',
+      'proveedores': 'proveedor',
+      'logistica y transporte': 'transporte,envio,flete,mensajeria,uber,taxi,gasolina,domicilio',
+      'reuniones': 'reunion',
+      'alimentos y bebidas': 'refrigerio,bebidas,catering,hielo,almuerzo del equipo,comida para el evento,snacks',
+      'software y herramientas': 'software,canva,google workspace,licencia,dominio,hosting,app,herramienta',
+      'equipos': 'equipo,camara,parlante,microfono,proyector,computador',
+      'arriendo y servicios': 'arriendo,oficina,internet,luz,agua,bodega',
+      'contador y legal': 'contador,abogado,notaria,camara de comercio,legal',
+      'impuestos': 'iva,retencion,ica,impuesto,dian,renta',
+      'comisiones bancarias': 'comision,cuota de manejo,4x1000,cuatro por mil,gmf',
+      'pagos de deudas': 'deuda,cuota del credito,cuota del prestamo',
+      'inversion en el negocio': 'inversion,invertimos',
+    },
+    income: {
+      'boleteria y entradas': 'boletas,boleteria,entradas,taquilla,tickets,preventa',
+      'venta de juegos de mesa': 'vendimos juegos,venta de juegos,juego de mesa,juegos de mesa,vendi un juego',
+      'patrocinios': 'patrocinio,patrocinador,sponsor',
+      'contenido digital': 'contenido,youtube,monetizacion',
+      'eventos privados y servicios': 'evento privado,servicio,nos contrataron,contrato',
+      'prestamos cobrados': 'me devolvio,nos devolvio',
+    },
+  },
+};
+const METHOD_SYN = [[/tarjeta de credito|con (la )?tarjeta|a credito|visa|mastercard|amex/, 'credit'], [/debito/, 'débito'], [/efectivo|cash|billete/, 'efectivo'], [/nequi/, 'nequi'], [/daviplata/, 'daviplata'], [/transferencia|transferi|pse|consignacion|consigne/, 'transferencia']];
+
+/* Números en palabras (dictado) */
+const UNI = { cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiun: 21, veintiuno: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100, doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300, cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500, seiscientos: 600, seiscientas: 600, setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800, novecientos: 900, novecientas: 900, medio: 0.5 };
+const isNumW = w => (w in UNI && w !== 'medio') || /^(mil|millon|millones)$/.test(w);
+function wordsToDigits(t) {
+  const toks = t.split(' '), out = [];
+  for (let i = 0; i < toks.length;) {
+    const w0 = toks[i];
+    if (!isNumW(w0) || ((w0 === 'un' || w0 === 'una') && !isNumW(toks[i + 1] || '')) || (/^(mil|millon|millones)$/.test(w0) && /^\$?\d/.test(out[out.length - 1] || ''))) { out.push(w0); i++; continue; }
+    let total = 0, cur = 0, j = i;
+    while (j < toks.length) {
+      const w = toks[j];
+      if (w in UNI && w !== 'medio') { cur += UNI[w]; j++; }
+      else if (w === 'y' && j > i && isNumW(toks[j + 1] || '') && toks[j + 1] !== 'mil') { j++; }
+      else if (w === 'mil') { total += (cur || 1) * 1000; cur = 0; j++; }
+      else if (w === 'millon' || w === 'millones') { total = (total + (cur || 1)) * 1e6; cur = 0; j++; }
+      else break;
+    }
+    out.push(String(total + cur)); i = j;
+  }
+  return out.join(' ').replace(/(\d+(?:[.,]\d+)?) (millones|millon) (?:y )?(\d{1,3}) (mil|lucas)/g, (_, a, u, b) => String(parseFloat(a.replace(',', '.')) * 1e6 + Number(b) * 1000));
+}
+function parseAmount(t) {
+  // t normalizado. Devuelve {amount, cur, start, end}
+  const re = /\$?\s?(\d{1,3}(?:[.,]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)\s*(millones|millon|palos?|mil|lucas?|k\b|m\b)?(?:\s*(?:y|con)\s*(medio))?(?:\s*(?:de\s+)?(pesos|dolares|usd|euros|eur))?/g;
+  let m, best = null;
+  while ((m = re.exec(t))) {
+    let s = m[1]; const unit = m[2] || '';
+    if (/^\d{1,3}([.,]\d{3})+$/.test(s)) s = s.replace(/[.,]/g, '');
+    else s = s.replace(',', '.');
+    let v = parseFloat(s); if (!isFinite(v)) continue;
+    if (/^(millones|millon|palo|palos|m)$/.test(unit)) v *= 1e6;
+    else if (/^(mil|luca|lucas|k)$/.test(unit)) v *= 1000;
+    if (m[3]) v += /^(millones|millon|palo|palos|m)$/.test(unit) ? 5e5 : /^(mil|luca|lucas|k)$/.test(unit) ? 500 : 0;
+    const cur = /dolar|usd/.test(m[4] || '') ? 'USD' : /euro|eur/.test(m[4] || '') ? 'EUR' : 'COP';
+    // ignora números que parecen fechas u horas ("el 15 de", "a las 3")
+    const before = t.slice(Math.max(0, m.index - 7), m.index);
+    if (!unit && !m[4] && v < 1000 && /(el|las|la|dia|cuota|de)\s$/.test(before) && cur === 'COP') continue;
+    if (!best || v > best.amount) best = { amount: v, cur, start: m.index, end: m.index + m[0].length };
+  }
+  if (best && best.cur === 'COP' && /dolar|usd/.test(t)) best.cur = 'USD';
+  return best;
+}
+function parseDate(t) {
+  const now = new Date();
+  if (/\b(anteayer|antier|antes de ayer)\b/.test(t)) return ds(addDays(now, -2));
+  if (/\bayer\b/.test(t)) return ds(addDays(now, -1));
+  const dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  const wm = t.match(/\bel (domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b/);
+  if (wm) { const target = dias.indexOf(wm[1]); let back = (now.getDay() - target + 7) % 7; if (back === 0) back = 7; return ds(addDays(now, -back)); }
+  const dm = t.match(/\bel (\d{1,2})(?: de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre))?\b/);
+  if (dm && !/\bel \d{1,2} (mil|lucas|millones|pesos)/.test(t)) {
+    const d = Number(dm[1]), mo = dm[2] ? MES.indexOf(dm[2]) : now.getMonth();
+    if (d >= 1 && d <= 31) { let x = new Date(now.getFullYear(), mo, Math.min(d, daysIn(new Date(now.getFullYear(), mo, 1)))); if (x > now) x = new Date(now.getFullYear() - (dm[2] ? 1 : 0), mo - (dm[2] ? 0 : 1), d); return ds(x); }
+  }
+  return today();
+}
+function scoreText(t, words) {
+  let s = 0;
+  words.forEach(w => { w = norm(w); if (w.length < 2) return; const re = new RegExp('(^|[^a-z0-9])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(s|es)?([^a-z0-9]|$)'); if (re.test(t)) s += w.length > 4 ? 3 : 2; });
+  return s;
+}
+function matchCat(t, profile, kind) {
+  const cats = S.cats.filter(c => c.profile === profile && c.kind === kind);
+  let best = null;
+  cats.forEach(c => {
+    const syn = (SYN[profile]?.[kind]?.[norm(c.name)] || '').split(',');
+    const words = [...syn, ...(c.kw || []), ...(c.sys === 'debt' ? [] : (c.subs || [])), ...norm(c.name).split(' ').filter(w => w.length >= 5 && !['otros', 'pagos', 'deudas'].includes(w))];
+    const sc = scoreText(t, words);
+    if (sc && (!best || sc > best.sc)) best = { c, sc };
+  });
+  let sub = '';
+  if (best) (best.c.subs || []).forEach(s => { if (scoreText(t, [s])) sub = s; });
+  const fallback = cats.find(c => /^otros/i.test(c.name)) || cats[0];
+  return { cat: (best?.c || fallback)?.id, sub, sure: !!best };
+}
+function matchMethod(t) {
+  for (const m of S.methods) if (scoreText(t, [m.name])) return m.id;
+  for (const [re, key] of METHOD_SYN) if (re.test(t)) { const m = key === 'credit' ? S.methods.find(x => x.credit) : S.methods.find(x => norm(x.name).includes(key)); if (m) return m.id; }
+  const last = [...S.tx].sort((a, b) => b.createdAt - a.createdAt)[0];
+  return last?.method || S.methods[0]?.id;
+}
+function matchByName(t, list, fields) {
+  let best = null;
+  list.forEach(x => { const words = fields.flatMap(f => norm(x[f] || '').split(' ')).filter(w => w.length >= 4 && !['fondo', 'credito', 'deuda', 'prestamo', 'banco', 'ejemplo'].includes(w)); const sc = scoreText(t, words) + (fields.some(f => x[f] && t.includes(norm(x[f]))) ? 5 : 0); if (sc && (!best || sc > best.sc)) best = { x, sc }; });
+  return best?.x || null;
+}
+function extractPlace(orig, t) {
+  const m = orig.match(/\b(?:en|donde|de)\s+(?:el|la|los|las|un|una)?\s*(?:[a-záéíóúñ]+\s+)?([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ&'.-]*(?:\s+(?:[A-ZÁÉÍÓÚÑ0-9&][\wÁÉÍÓÚÑáéíóúñ&'.-]*|de|del|la|y))*)/);
+  if (m) { const p = m[1].trim().replace(/\s+(y|de|del|la)$/i, ''); if (!S.methods.some(x => norm(x.name) === norm(p)) && !/^(nequi|daviplata|efectivo|cumba|casa cumba|sergio)$/i.test(p)) return p; }
+  return '';
+}
+function parseOne(orig) {
+  const t = wordsToDigits(norm(orig));
+  if (!t) return null;
+  const amt = parseAmount(t);
+  let profile = /\b(cumba|empresa|negocio|evento)\b/.test(t) ? 'cumba' : /\b(personal|mio|mia|para mi|sergio)\b/.test(t) ? 'sergio' : (UI.profile === 'all' ? 'sergio' : UI.profile);
+  if (/\b(casa cumba|cumba) me (pago|consigno|transfirio)\b/.test(t)) profile = 'sergio';
+  const date = parseDate(t), method = matchMethod(t);
+  const item = { orig: orig.trim(), profile, date, method, amount: amt ? amt.amount : 0, cur: amt?.cur || 'COP', xProf: /\b(cumba|empresa|negocio|evento|personal|mio|mia|para mi|sergio)\b/.test(t), xDate: date !== today() };
+  // Ahorro
+  const funds = S.savings.filter(f => f.profile === profile || UI.profile === 'all');
+  if (/\b(ahorre|ahorro|abone|abono|guarde|meti|deposite|aporte|aporto)\b/.test(t) && !/\bdeuda|credito|prestamo|cuota\b/.test(t)) {
+    const f = matchByName(t, S.savings, ['name', 'account']) || (funds.length === 1 ? funds[0] : null);
+    if (f) return { ...item, type: 'save', fund: f.id, profile: f.profile, sign: 1 };
+  }
+  if (/\b(saque|retire|use)\b.*\b(ahorro|fondo)\b|\b(saque|retire)\b/.test(t)) {
+    const f = matchByName(t, S.savings, ['name', 'account']);
+    if (f) return { ...item, type: 'save', fund: f.id, profile: f.profile, sign: -1 };
+  }
+  // Deudas
+  if (/\b(cuota|deuda|credito|prestamo|abono|abone|pague)\b/.test(t)) {
+    const d = matchByName(t, S.debts.filter(x => !x.closed), ['name', 'who']);
+    if (d && (/\b(cuota|deuda|credito|prestamo|abono|abone)\b/.test(t) || d.dir === 'owed')) return { ...item, type: 'debt', debt: d.id, profile: d.profile, amount: item.amount || Math.min(d.monthly || 0, Math.max(0, d.total - debtPaid(d))) };
+  }
+  // Gasto o ingreso
+  const kind = /\b(me pagaron|me pago|recibi|recibimos|ingreso|ingresaron|entraron|entro|vendi|vendimos|cobre|cobramos|me consignaron|me transfirieron|gane|ganamos|nos pagaron|me devolvio|nos devolvio|facture|facturamos)\b/.test(t) ? 'income' : 'expense';
+  const mc = matchCat(t, profile, kind);
+  const tags = (orig.match(/#[\wáéíóúñü]+/gi) || []).map(x => x.slice(1).toLowerCase());
+  return { ...item, type: 'tx', kind, cat: mc.cat, sub: mc.sub, sure: mc.sure, note: extractPlace(orig, t) || orig.trim().replace(/^(hey|oye|ey|bueno|listo)[, ]+/i, '').slice(0, 70), tags };
+}
+function parseQuick(text) {
+  const raw = text.split(/\n|[.;!?](?=\s|$)|,?\s+(?:y\s+)?(?:tambi[eé]n|adem[aá]s|luego|despu[eé]s|y otro|y otra)\b|,?\s+y\s+(?=(?:gast[eé]|pagu[eé]|compr[eé]|me pagaron|recib[ií]|vend[ií]|ahorr[eé]|abon[eé])\b)/i).map(s => s && s.trim()).filter(s => s && s.length > 2);
+  const segs = [];
+  raw.forEach(s => { const has = parseAmount(wordsToDigits(norm(s))); if (!has && segs.length) segs[segs.length - 1] += ', ' + s; else segs.push(s); });
+  const items = segs.map(parseOne).filter(Boolean);
+  for (let i = 1; i < items.length; i++) {
+    const it = items[i], pv = items[i - 1];
+    if (!it.xDate) it.date = pv.date;
+    if (!it.xProf && it.type === 'tx' && pv.profile !== it.profile) { it.profile = pv.profile; const mc = matchCat(wordsToDigits(norm(it.orig)), it.profile, it.kind); it.cat = mc.cat; it.sub = mc.sub; it.sure = mc.sure; }
+  }
+  return items;
+}
+/* Hoja de registro rápido */
+let QUICK = { text: '', items: [] };
+function quickSheet() {
+  QUICK = { text: '', items: [] };
+  openSheet({
+    title: 'Registro rápido',
+    render: () => {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let h = `<div class="qbox"><textarea class="inp" id="qT" rows="3" placeholder="Ej: Gasté 45 mil en Crepes & Waffles con tarjeta">${esc(QUICK.text)}</textarea>
+        <button class="mic ${REC ? 'on' : ''}" id="qMic" aria-label="${REC ? 'Detener dictado' : 'Hablar'}">${REC ? '■' : MIC_SVG}</button></div>
+        <p class="note" style="margin:-4px 0 0">${REC ? '<b>Escuchando…</b> habla normal y toca ■ al terminar.' : SR ? 'Toca el micrófono y dilo como se lo dirías a alguien. Puedes decir varios gastos seguidos.' : 'Toca el micrófono del teclado del iPhone para dictar, o escríbelo.'}</p>
+        <div class="btns"><button class="btn ghost" data-act="fullForm">Formulario completo</button><button class="btn pri" id="qGo">Entender</button></div>`;
+      if (QUICK.items.length) {
+        h += `<section class="card"><h3>Esto entendí</h3><div class="list">${QUICK.items.map((it, i) => quickRow(it, i)).join('')}</div></section>
+          <button class="btn pri block" data-act="quickSaveAll">Guardar ${QUICK.items.length > 1 ? 'los ' + QUICK.items.length : ''}</button>`;
+      } else h += `<section class="card note" style="display:flex;flex-direction:column;gap:6px"><b>Ejemplos que entiendo</b>
+          <span>“Gasté 45 mil en Crepes & Waffles con tarjeta”</span><span>“Ayer pagué 120 lucas de gasolina en efectivo”</span>
+          <span>“Cumba: 800 mil de sonido para el evento, por transferencia”</span><span>“Me pagaron 3 millones de salario”</span>
+          <span>“Abone 200 mil al viaje a México”</span><span>“Pagué la cuota del crédito de Bancolombia”</span></section>`;
+      return h;
+    },
+    mount: el => {
+      const ta = $('#qT', el);
+      ta.oninput = () => { QUICK.text = ta.value; };
+      if (!QUICK.items.length && !REC) setTimeout(() => ta.focus(), 250);
+      $('#qGo', el).onclick = () => { QUICK.text = ta.value; if (!ta.value.trim()) return toast('Escribe o dicta un gasto', 'bad'); QUICK.items = parseQuick(ta.value); if (!QUICK.items.length) toast('No entendí. Prueba con monto y en qué fue.', 'bad'); redrawSheet(); };
+      $('#qMic', el).onclick = () => toggleDictation();
+    },
+  });
+}
+function quickRow(it, i) {
+  const P = S.profiles[it.profile].name, rate = it.cur === 'COP' ? 1 : (S.settings.rates[it.cur] || 1), v = Math.round(it.amount * rate);
+  const warn = !it.amount ? '<span class="tag warn">falta el monto</span>' : it.type === 'tx' && !it.sure ? '<span class="tag warn">revisa la categoría</span>' : '';
+  let icon, title, sub, sign = '-';
+  if (it.type === 'save') { const f = S.savings.find(x => x.id === it.fund); icon = f.icon || '🐷'; title = (it.sign > 0 ? 'Abono a ' : 'Retiro de ') + f.name; sub = 'Ahorro'; sign = it.sign > 0 ? '' : '-'; }
+  else if (it.type === 'debt') { const d = S.debts.find(x => x.id === it.debt); icon = '💳'; title = (d.dir === 'owe' ? 'Pago de ' : 'Cobro de ') + d.name; sub = 'Deuda'; sign = d.dir === 'owe' ? '-' : '+'; }
+  else { const c = catById(it.cat) || {}; icon = c.icon || '•'; title = c.name || 'Sin categoría'; sub = it.kind === 'income' ? 'Ingreso' : 'Gasto'; sign = it.kind === 'income' ? '+' : '-'; }
+  const m = methodById(it.method);
+  return `<div class="row"><span class="ci" style="background:var(--surface2)">${esc(icon)}</span><span class="tx"><b>${esc(title)}${warn}</b><small style="white-space:normal">${esc([sub + ' · ' + P, dayLabel(it.date), it.type !== 'save' && m ? m.name : '', it.note].filter(Boolean).join(' · '))}</small></span>
+    <span style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><span class="am num ${sign === '+' ? 'in' : ''}">${it.amount ? sign + amt(v) : '—'}</span><span style="display:flex;gap:6px"><button class="link" data-act="quickEdit" data-i="${i}">Editar</button><button class="link" style="color:var(--muted)" data-act="quickDrop" data-i="${i}">Quitar</button></span></span></div>`;
+}
+function quickEdit(i) {
+  const it = QUICK.items[i];
+  if (it.type !== 'tx') {
+    openSheet({
+      title: 'Ajustar monto', render: () => `<div class="amount"><input id="qeA" inputmode="numeric" value="${fmtInput(it.amount)}" aria-label="Monto"></div><div class="fld"><label for="qeD">Fecha</label><input class="inp" type="date" id="qeD" value="${it.date}"></div><button class="btn pri block" id="qeOk">Listo</button>`,
+      mount: el => { const a = $('#qeA', el); a.oninput = () => { a.value = fmtInput(a.value); }; $('#qeOk', el).onclick = () => { it.amount = parseAmt(a.value); it.date = $('#qeD', el).value || it.date; closeSheet(); }; },
+    });
+    return;
+  }
+  F = { id: null, profile: it.profile, kind: it.kind, amountTxt: it.amount ? fmtInput(it.amount) : '', cur: it.cur, cat: it.cat, sub: it.sub, date: it.date, method: it.method, note: it.note, cuotas: 1, paidBy: false, receipt: null, receiptNew: null, quickIdx: i };
+  openSheet(txSheet());
+}
+function quickFromForm() {
+  const it = QUICK.items[F.quickIdx];
+  Object.assign(it, { profile: F.profile, kind: F.kind, amount: parseAmt(F.amountTxt), cur: F.cur, cat: F.cat, sub: F.sub, date: F.date, method: F.method, note: F.note, sure: true, receiptNew: F.receiptNew, paidBy: F.paidBy });
+  F = null; closeSheet();
+}
+async function quickSaveAll() {
+  const bad = QUICK.items.findIndex(it => !it.amount || (it.type === 'tx' && !it.cat));
+  if (bad >= 0) return toast('Hay un movimiento sin monto. Toca Editar.', 'bad');
+  const touched = new Set();
+  for (const it of QUICK.items) {
+    const rate = it.cur === 'COP' ? 1 : (S.settings.rates[it.cur] || 1), v = Math.round(it.amount * rate);
+    if (it.type === 'save') { const f = S.savings.find(x => x.id === it.fund); S.savMoves.push({ id: uid(), fund: f.id, amount: v * it.sign, date: it.date, account: f.account, who: '', note: 'Registro rápido' }); }
+    else if (it.type === 'debt') {
+      const d = S.debts.find(x => x.id === it.debt), cat = sysCat(d.profile, d.dir === 'owe' ? 'debt' : 'loanin'), txId = uid();
+      S.tx.push({ id: txId, profile: d.profile, kind: d.dir === 'owe' ? 'expense' : 'income', cat: cat?.id, sub: d.type === 'banco' ? 'Banco' : d.type === 'tarjeta' ? 'Tarjeta de crédito' : 'Persona', amount: v, method: it.method, note: d.name, tags: [], date: it.date, debtId: d.id, createdAt: Date.now() });
+      S.debtPays.push({ id: uid(), debt: d.id, amount: v, date: it.date, note: '', txId });
+      if (debtPaid(d) >= d.total) d.closed = true;
+      if (d.dir === 'owe') touched.add(d.profile);
+    } else {
+      let rid = null; if (it.receiptNew) { rid = uid(); await putReceipt(rid, it.receiptNew); }
+      S.tx.push({ id: uid(), profile: it.profile, kind: it.kind, cat: it.cat, sub: it.sub || '', amount: v, method: it.method, note: (it.note || '').trim(), tags: it.tags || (it.note.match(/#[\wáéíóúñü]+/gi) || []).map(x => x.slice(1).toLowerCase()), date: it.date, orig: it.cur !== 'COP' ? { cur: it.cur, amt: it.amount } : null, receipt: rid, paidBy: it.paidBy ? other(it.profile) : null, createdAt: Date.now() });
+      if (it.kind === 'expense') touched.add(it.profile);
+    }
+  }
+  const n = QUICK.items.length; QUICK = { text: '', items: [] };
+  persist(); closeAll(); render(); toast(n > 1 ? `${n} movimientos guardados` : 'Guardado');
+  touched.forEach(p => checkAlerts(p));
+}
+
+/* Dictado con el reconocimiento de voz del iPhone (la app no guarda audio) */
+const MIC_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+let REC = null;
+function toggleDictation() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const ta = $('#qT');
+  if (REC) { REC.stop(); return; }
+  if (!SR) { ta.focus(); toast('Toca el micrófono del teclado para dictar'); return; }
+  const base = ta.value ? ta.value.trim() + ' ' : '';
+  try {
+    const r = new SR(); REC = r;
+    r.lang = 'es-CO'; r.interimResults = true; r.continuous = true;
+    r.onresult = e => { let s = ''; for (let k = 0; k < e.results.length; k++) s += e.results[k][0].transcript; QUICK.text = base + s; const t = $('#qT'); if (t) t.value = QUICK.text; };
+    r.onerror = e => { REC = null; if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Sin permiso de micrófono. Usa el micrófono del teclado.', 'bad'); redrawSheet(); };
+    r.onend = () => { REC = null; redrawSheet(); if (QUICK.text.trim()) { QUICK.items = parseQuick(QUICK.text); redrawSheet(); } };
+    r.start(); redrawSheet();
+  } catch { REC = null; ta.focus(); toast('Usa el micrófono del teclado para dictar'); }
+}
+
 /* ---------- Bloqueo y bienvenida ---------- */
 let PIN = '', LOCKMODE = 'unlock', FIRSTPIN = '', SETUP_STEP = 0;
 function showLock() {
@@ -1601,7 +1917,9 @@ const ACT = {
   scrim: (d, el, e) => { if (e.target === el) closeAll(); },
   close: () => closeAll(), back: () => closeSheet(),
   tab: d => { UI.tab = d.tab; render(); window.scrollTo(0, 0); },
-  add: () => newTx(),
+  add: () => quickSheet(),
+  fullForm: () => { const t = QUICK.text; closeSheet(); newTx(t ? { note: t.slice(0, 70) } : {}); },
+  quickEdit: d => quickEdit(Number(d.i)), quickDrop: d => { QUICK.items.splice(Number(d.i), 1); redrawSheet(); }, quickSaveAll: () => quickSaveAll(),
   switchProfile: () => switchProfileSheet(),
   setProfile: d => setProfile(d.k),
   discreet: () => { S.settings.discreet = !S.settings.discreet; persist(); render(); toast(S.settings.discreet ? 'Montos ocultos' : 'Montos visibles'); },
